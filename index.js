@@ -5,7 +5,9 @@ import { open } from "sqlite";
 import sqlite3 from "sqlite3";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import cors from "cors";
 
+app.use(cors());
 dotenv.config();
 
 const app = express();

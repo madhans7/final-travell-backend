@@ -10,7 +10,6 @@ import jwt from "jsonwebtoken";
 dotenv.config();
 
 const app = express();
-app.use(express.json());
 app.use(
   cors({
     origin: "*",
@@ -22,8 +21,12 @@ app.use(
       "Accept",
       "Authorization",
     ],
+    optionsSuccessStatus: 204,
+    preflightContinue: false,
   })
 );
+app.options("*", cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 let db = null;

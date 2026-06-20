@@ -9,6 +9,19 @@ import jwt from "jsonwebtoken";
 
 dotenv.config();
 
+const JWT_SECRET = process.env.JWT_SECRET?.trim();
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim();
+
+if (!JWT_SECRET) {
+  console.error("Missing required environment variable: JWT_SECRET");
+  process.exit(1);
+}
+
+if (!GEMINI_API_KEY) {
+  console.error("Missing required environment variable: GEMINI_API_KEY");
+  process.exit(1);
+}
+
 const app = express();
 app.use(
   cors({

@@ -49,10 +49,32 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
+
 async function generatePlan(destination) {
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: `Create a simple 3-day travel plan for ${destination}`,
+    contents: `
+You are a travel planner.
+
+Return ONLY valid JSON in this format:
+
+{
+  "destination": "${destination}",
+  "places": [
+    {
+      "day": 1,
+      "title": "Place name",
+      "description": "short description"
+    }
+  ]
+}
+
+Rules:
+- Only JSON
+- No text
+- No markdown
+- Minimum 5 places
+`
   });
 
   return response.text;
@@ -135,35 +157,8 @@ app.post("/login", async (req, res) => {
     });
   }
 });
-async function generatePlan(destination) {
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: `
-You are a travel planner.
 
-Return ONLY valid JSON in this format:
 
-{
-  "destination": "${destination}",
-  "places": [
-    {
-      "day": 1,
-      "title": "Place name",
-      "description": "short description"
-    }
-  ]
-}
-
-Rules:
-- Only JSON
-- No text
-- No markdown
-- Minimum 5 places
-`
-  });
-
-  return response.text;
-}
 
 /* ---------------- GENERATE + SAVE ---------------- */
 app.post("/generate-itinerary", auth, async (req, res) => {

@@ -105,24 +105,34 @@ app.post("/login", async (req, res) => {
     );
 
     if (!user) {
-      return res.status(400).json({ error: "User not found" });
+      return res.status(400).json({
+        error: "User not found",
+      });
     }
 
-    const ok = await bcrypt.compare(password, user.password);
+    const isValid = await bcrypt.compare(
+      password,
+      user.password
+    );
 
-    if (!ok) {
-      return res.status(400).json({ error: "Wrong password" });
+    if (!isValid) {
+      return res.status(400).json({
+        error: "Wrong password",
+      });
     }
 
     const token = jwt.sign(
       { userId: user.id },
-      JWT_SECRET,
-      { expiresIn: "1d" }
+      process.env.JWT_SECRET
     );
 
-    res.json({ token });
+    return res.json({ token });
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.log("LOGIN ERROR:", err);
+    return res.status(500).json({
+      error: err.message,
+    });
   }
 });
 

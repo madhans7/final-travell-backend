@@ -7,12 +7,12 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cors from "cors";
 
-app.use(cors());
+
 dotenv.config();
 
 const app = express();
 app.use(express.json());
-
+app.use(cors());
 let db;
 
 // Database

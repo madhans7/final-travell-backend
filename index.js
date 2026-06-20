@@ -282,9 +282,15 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: "Invalid JSON payload" });
   }
 
-  res.status(err.status || 500).json({
+  const payload = {
     error: err.message || "Internal Server Error",
-  });
+  };
+
+  if (process.env.NODE_ENV !== "production") {
+    payload.stack = err.stack;
+  }
+
+  res.status(err.status || 500).json(payload);
 });
 
 app.get("/", (req, res) => {

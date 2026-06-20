@@ -271,6 +271,22 @@ app.get("/suggestions/:destination", authenticateToken, async (req, res) => {
   }
 });
 
+app.use((err, req, res, next) => {
+  console.error("Express error:", err);
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Invalid JSON payload" });
+  }
+
+  res.status(err.status || 500).json({
+    error: err.message || "Internal Server Error",
+  });
+});
+
 app.get("/", (req, res) => {
   res.json({ success: true, message: "Travel planner API is running" });
 });

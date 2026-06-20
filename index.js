@@ -1,317 +1,238 @@
 import express from "express";
 import cors from "cors";
-import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { open } from "sqlite";
 import sqlite3 from "sqlite3";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
+const app = express();
+
+/* -------------------- MIDDLEWARE -------------------- */
+app.use(cors());
+app.use(express.json());
+
+/* -------------------- ENV CHECK -------------------- */
 const JWT_SECRET = process.env.JWT_SECRET?.trim();
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim();
 
-if (!JWT_SECRET) {
-  console.error("Missing required environment variable: JWT_SECRET");
+if (!JWT_SECRET || !GEMINI_API_KEY) {
+  console.error("Missing ENV variables");
   process.exit(1);
 }
 
-if (!GEMINI_API_KEY) {
-  console.error("Missing required environment variable: GEMINI_API_KEY");
-  process.exit(1);
-}
+/* -------------------- DATABASE -------------------- */
+let db;
 
-const app = express();
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Origin",
-      "X-Requested-With",
-      "Content-Type",
-      "Accept",
-      "Authorization",
-    ],
-    optionsSuccessStatus: 204,
-    preflightContinue: false,
-  })
-);
-app.options(/.*/, cors());
-app.use(express.json());
+const initDB = async () => {
+  db = await open({
+    filename: "./travel-planner.db",
+    driver: sqlite3.Database,
+  });
 
-const PORT = process.env.PORT || 3000;
-let db = null;
-
-const createTables = async () => {
   await db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      password TEXT
+    );
 
-CREATE TABLE IF NOT EXISTS travel_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  destination TEXT NOT NULL,
-  description TEXT,
-  rating REAL DEFAULT 4.5,
-  itinerary_json TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
+    CREATE TABLE IF NOT EXISTS travel_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      destination TEXT,
+      description TEXT,
+      rating REAL,
+      itinerary_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+
+  console.log("✅ Database ready");
 };
 
-const initializeDB = async () => {
-  try {
-    db = await open({
-      filename: "./travel-planner.db",
-      driver: sqlite3.Database,
-    });
-
-    await createTables();
-    console.log("Database Connected");
-  } catch (error) {
-    console.error(error.message);
-    process.exit(1);
-  }
-};
-
+/* -------------------- GEMINI -------------------- */
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: GEMINI_API_KEY,
 });
 
-async function generateText(userInput) {
-  const {
-    destination,
-    start_date,
-    end_date,
-    budget,
-    travelers,
-    trip_type,
-    interests,
-    accommodation_type,
-    transportation_preference,
-  } = userInput;
-
+async function generateItinerary(input) {
   const prompt = `
-You are an AI Travel Planner API.
-
 Return ONLY valid JSON.
 
-User Input:
-{
-  "destination": "${destination}",
-  "start_date": "${start_date}",
-  "end_date": "${end_date}",
-  "budget": "${budget}",
-  "travelers": "${travelers}",
-  "trip_type": "${trip_type}",
-  "interests": ${JSON.stringify(interests)},
-  "accommodation_type": "${accommodation_type}",
-  "transportation_preference": "${transportation_preference}"
-}
+User:
+destination: ${input.destination}
+start_date: ${input.start_date}
+end_date: ${input.end_date}
+budget: ${input.budget}
+travelers: ${input.travelers}
+trip_type: ${input.trip_type}
+interests: ${JSON.stringify(input.interests)}
 
-Generate a complete travel itinerary JSON.
+Create travel itinerary JSON with:
+- trip_summary
+- day_wise_plan
+- budget_breakdown
+- tips
 `;
 
-  const response = await ai.models.generateContent({
+  const result = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-    },
+    config: { responseMimeType: "application/json" },
   });
 
-  return response.text;
+  return result.text;
 }
 
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
+/* -------------------- AUTH MIDDLEWARE -------------------- */
+function auth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header) return res.status(401).json({ error: "No token" });
 
-  if (!authHeader) {
-    return res.status(401).json({ error: "Authorization header missing" });
-  }
+  const token = header.split(" ")[1];
 
-  const token = authHeader.split(" ")[1];
-  if (!token) {
-    return res.status(401).json({ error: "Token missing" });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (error, payload) => {
-    if (error) {
-      return res.status(403).json({ error: "Invalid token" });
-    }
-
-    req.user = payload;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
     next();
-  });
-};
+  } catch {
+    return res.status(403).json({ error: "Invalid token" });
+  }
+}
 
+/* -------------------- ROUTES -------------------- */
+
+/* Health */
+app.get("/", (req, res) => {
+  res.json({ status: "OK", message: "Travel Planner API running" });
+});
+
+/* Register */
 app.post("/register", async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ error: "username and password are required" });
-    }
+    if (!username || !password)
+      return res.status(400).json({ error: "Missing fields" });
 
-    const existingUser = await db.get(`SELECT * FROM users WHERE username = ?`, [username]);
-    if (existingUser) {
-      return res.status(400).json({ error: "User already exists" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await db.run(
-      `INSERT INTO users(username, password) VALUES(?, ?)`,
-      [username, hashedPassword]
+    const exists = await db.get(
+      "SELECT * FROM users WHERE username = ?",
+      username
     );
 
-    res.status(201).json({ message: "User created successfully" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (exists)
+      return res.status(400).json({ error: "User already exists" });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    await db.run(
+      "INSERT INTO users(username, password) VALUES(?, ?)",
+      username,
+      hashed
+    );
+
+    res.json({ message: "User created" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
+/* Login */
 app.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ error: "username and password are required" });
-    }
-
     const user = await db.get(
-      `SELECT * FROM users WHERE username = ?`,
-      [username]
+      "SELECT * FROM users WHERE username = ?",
+      username
     );
 
-    if (!user) {
-      return res.status(400).json({ error: "Invalid username or password" });
-    }
+    if (!user)
+      return res.status(400).json({ error: "Invalid credentials" });
 
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(400).json({ error: "Invalid username or password" });
-    }
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok)
+      return res.status(400).json({ error: "Invalid credentials" });
 
-    const payload = { userId: user.id, username: user.username };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1d" });
+    const token = jwt.sign(
+      { userId: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
 
     res.json({ token });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.post("/generate-itinerary", authenticateToken, async (req, res) => {
+/* Generate itinerary */
+app.post("/generate-itinerary", auth, async (req, res) => {
   try {
-    const result = await generateText(req.body);
-    let itinerary;
-
-    try {
-      itinerary = JSON.parse(result);
-    } catch (parseError) {
-      return res.status(500).json({
-        error: "Invalid JSON returned by Gemini",
-        details: parseError.message,
-        rawResult: result,
-      });
-    }
+    const text = await generateItinerary(req.body);
+    const itinerary = JSON.parse(text);
 
     await db.run(
-      `INSERT INTO travel_history(user_id, destination, description, rating, itinerary_json) VALUES(?,?,?,?,?)`,
-      [
-        req.user.userId,
-        itinerary.trip_summary?.destination || req.body.destination || "",
-        itinerary.trip_summary?.summary || "Travel Plan",
-        itinerary.rating || 4.5,
-        JSON.stringify(itinerary),
-      ]
+      `INSERT INTO travel_history
+      (user_id, destination, description, rating, itinerary_json)
+      VALUES (?, ?, ?, ?, ?)`,
+      req.user.userId,
+      req.body.destination,
+      itinerary.trip_summary?.summary || "Trip",
+      itinerary.rating || 4.5,
+      JSON.stringify(itinerary)
     );
 
     res.json({ success: true, itinerary });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.get("/history", authenticateToken, async (req, res) => {
-  try {
-    const history = await db.all(
-      `SELECT id, destination, description, rating, created_at FROM travel_history WHERE user_id = ? ORDER BY created_at DESC`,
-      [req.user.userId]
-    );
+/* History */
+app.get("/history", auth, async (req, res) => {
+  const data = await db.all(
+    "SELECT * FROM travel_history WHERE user_id = ? ORDER BY created_at DESC",
+    req.user.userId
+  );
 
-    res.json(history);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json(data);
 });
 
-app.get("/itinerary/:id", authenticateToken, async (req, res) => {
-  try {
-    const itinerary = await db.get(
-      `SELECT * FROM travel_history WHERE id = ? AND user_id = ?`,
-      [req.params.id, req.user.userId]
-    );
+/* Single itinerary */
+app.get("/itinerary/:id", auth, async (req, res) => {
+  const item = await db.get(
+    "SELECT * FROM travel_history WHERE id = ? AND user_id = ?",
+    req.params.id,
+    req.user.userId
+  );
 
-    if (!itinerary) {
-      return res.status(404).json({ error: "Not found" });
-    }
+  if (!item) return res.status(404).json({ error: "Not found" });
 
-    res.json(JSON.parse(itinerary.itinerary_json));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json(JSON.parse(item.itinerary_json));
 });
 
-app.get("/suggestions/:destination", authenticateToken, async (req, res) => {
-  try {
-    const { destination } = req.params;
-    const suggestions = await db.all(
-      `SELECT id, destination, description, rating FROM travel_history WHERE destination LIKE ? ORDER BY rating DESC LIMIT 10`,
-      [`%${destination}%`]
-    );
+/* Suggestions */
+app.get("/suggestions/:destination", auth, async (req, res) => {
+  const data = await db.all(
+    `SELECT * FROM travel_history
+     WHERE destination LIKE ?
+     ORDER BY rating DESC
+     LIMIT 10`,
+    `%${req.params.destination}%`
+  );
 
-    res.json(suggestions);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json(data);
 });
 
-app.use((err, req, res, next) => {
-  console.error("Express error:", err);
-
-  if (res.headersSent) {
-    return next(err);
-  }
-
-  if (err.type === "entity.parse.failed") {
-    return res.status(400).json({ error: "Invalid JSON payload" });
-  }
-
-  const payload = {
-    error: err.message || "Internal Server Error",
-  };
-
-  if (process.env.NODE_ENV !== "production") {
-    payload.stack = err.stack;
-  }
-
-  res.status(err.status || 500).json(payload);
-});
-
-app.get("/", (req, res) => {
-  res.json({ success: true, message: "Travel planner API is running" });
-});
-
-initializeDB().then(() => {
+/* -------------------- START SERVER -------------------- */
+initDB().then(() => {
+  const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Server Running: http://localhost:${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
   });
 });

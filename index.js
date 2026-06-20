@@ -137,18 +137,19 @@ app.post("/login", async (req, res) => {
 });
 
 /* ---------------- GENERATE + SAVE ---------------- */
-app.post("/generate", auth, async (req, res) => {
+app.post("/generate-itinerary", authenticateToken, async (req, res) => {
   try {
-    const { destination } = req.body;
+    const result = await generatePlan(req.body.destination);
 
-    const result = await generatePlan(destination);
+    const json = JSON.parse(result); // convert to JSON
 
     await db.run(
-      "INSERT INTO history(user_id,destination,response) VALUES (?,?,?)",
-      [req.user.userId, destination, result]
+      `INSERT INTO history(user_id,destination,response)
+       VALUES(?,?,?)`,
+      [req.user.userId, req.body.destination, result]
     );
 
-    res.json({ success: true, result });
+    res.json(json); // send JSON directly
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

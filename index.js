@@ -137,7 +137,7 @@ app.post("/login", async (req, res) => {
 });
 
 /* ---------------- GENERATE + SAVE ---------------- */
-app.post("/generate-itinerary", authenticateToken, async (req, res) => {
+app.post("/generate-itinerary", auth, async (req, res) => {
   try {
     const result = await generatePlan(req.body.destination);
 

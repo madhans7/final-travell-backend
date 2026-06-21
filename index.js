@@ -56,25 +56,30 @@ async function generatePlan(destination) {
     contents: `
 You are a travel planner.
 
-Return ONLY valid JSON in this format:
+Create a travel itinerary ONLY for ${destination}.
+
+IMPORTANT RULES:
+- Every place must be located in ${destination}.
+- Do NOT include attractions from any other city, state, or country.
+- If ${destination} is a city, use real tourist attractions from that city.
+- Return exactly 5 places.
+- Return ONLY valid JSON.
+- No markdown.
+- No explanations.
+
+JSON format:
 
 {
   "destination": "${destination}",
   "places": [
     {
       "day": 1,
-      "title": "Place name",
-      "description": "short description"
+      "title": "Place Name",
+      "description": "Short description"
     }
   ]
 }
-
-Rules:
-- Only JSON
-- No text
-- No markdown
-- Minimum 5 places
-`
+`,
   });
 
   return response.text;
@@ -163,18 +168,17 @@ app.post("/login", async (req, res) => {
 /* ---------------- GENERATE + SAVE ---------------- */
 app.post("/generate-itinerary", auth, async (req, res) => {
   try {
+    console.log("Requested destination:", req.body.destination);
+
     const result = await generatePlan(req.body.destination);
 
-    const json = JSON.parse(result); // convert to JSON
+    console.log("Gemini response:", result);
 
-    await db.run(
-      `INSERT INTO history(user_id,destination,response)
-       VALUES(?,?,?)`,
-      [req.user.userId, req.body.destination, result]
-    );
+    const json = JSON.parse(result);
 
-    res.json(json); // send JSON directly
+    res.json(json);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
